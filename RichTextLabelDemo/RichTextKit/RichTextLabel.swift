@@ -121,6 +121,24 @@ public final class RichTextLabel: UIView {
         set { layoutManager.layoutQueue = newValue }
     }
 
+    /// 可选：把绘制命令的执行延后到 `TextDisplayLayer.draw(in:)` 返回之后。
+    ///
+    /// 和 `layoutQueue` 是一对「把耗时挪走」的开关，分工不同：
+    /// `layoutQueue` 挪走**排版**，这个挪走**绘制命令的执行**，两者可以独立开关。
+    ///
+    /// 默认 `false`，行为与不开时完全一致。开启后画面与关闭时一致：
+    /// 黑灰正文逐位相同，彩色内容及其抗锯齿边缘有 LSB 级色差，肉眼不可辨。
+    /// 收益是绘制量大（大量 decoration / 长文档）时主线程耗时下降，
+    /// 代价是内容上屏时机可能延后。许可性语义，系统可以不采纳。
+    ///
+    /// 逐帧变化的内容（动画）不要开：延后的执行时机和动画节奏对不上。
+    /// 排版和绘制入口仍在主线程，所以不引入数据竞争，
+    /// 但自定义 `InlineDecoration` 的 `draw(in:frame:state:)` 里不能回读 context。
+    public var rendersAsynchronously: Bool {
+        get { displayLayer.rendersAsynchronously }
+        set { displayLayer.rendersAsynchronously = newValue }
+    }
+
     // MARK: 内容
 
     public private(set) var attributedText: NSAttributedString?

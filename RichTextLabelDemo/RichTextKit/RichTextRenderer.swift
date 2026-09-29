@@ -152,9 +152,33 @@ extension RichTextRenderer: NSTextLayoutManagerDelegate {
 ///
 /// 用 layer 而不是 `UIView.draw(_:)`，是为了让绘制和视图解耦：
 /// 同一个 renderer 可以驱动多个 layer（例如高亮层和文本层分离），
-/// 也便于后续接入异步渲染。
+/// 也便于接入异步渲染（见 `rendersAsynchronously`）。
 final class TextDisplayLayer: CALayer {
     weak var renderer: RichTextRenderer?
+
+    /// 是否异步渲染。默认 `false`，即绘制命令在 `draw(in:)` 返回前同步执行完毕。
+    ///
+    /// 开启后直通 CALayer 的 `drawsAsynchronously`：`draw(in:)` 收到的 `CGContext`
+    /// **可能**把提交给它的绘制命令排队，等本方法返回之后再执行
+    /// （头文件用的是 *may queue*，许可性语义，系统可以不采纳）。
+    /// 收益是绘制量大时 `display()` 更快返回，代价是内容上屏时机可能延后。
+    ///
+    /// 被延后的**只有 CG 命令的执行**，`draw(in:)` 本身仍在主线程同步跑完 ——
+    /// 所以 `ensureLayout`、fragment 上的 `contentsScale` / `isHighlighted` 写入、
+    /// `ImageDecoration` 未命中图片时触发的加载，都还在主线程，不引入新的数据竞争。
+    /// 前提是绘制路径不回读 context（`CGBitmapContextGetData` /
+    /// `UIGraphicsGetImageFromCurrentImageContext` 之类）：命令延后执行时回读只能拿到空数据。
+    ///
+    /// 命名不用 `drawsAsynchronously`：那是继承来的属性，Swift 子类无法用存储属性覆盖它。
+    var rendersAsynchronously: Bool = false {
+        didSet {
+            guard rendersAsynchronously != oldValue else { return }
+            drawsAsynchronously = rendersAsynchronously
+            // 开关只对「之后发生的那次绘制」生效。layer 不脏的话光改 flag 什么都不会变，
+            // 运行期切换会看起来毫无反应。
+            setNeedsDisplay()
+        }
+    }
 
     override func draw(in context: CGContext) {
         renderer?.draw(in: context)
