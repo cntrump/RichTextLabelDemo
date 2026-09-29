@@ -8,7 +8,7 @@
 
 - **内联自绘元素**：图标由 `InlineDecoration` 协议接管绘制，不受 `NSTextAttachment.image` 的能力限制 —— 异步加载、程序化绘制、后续接动画都可以。占位尺寸即最终尺寸，图片到位**只重绘、不重排**，行高不跳动。
 - **任意 token 可点击**：不止 `.link`。emoji、@提及、徽章都能响应点击，回调携带 `identifier` / `payload` / `range`。命中测试区分两套坐标系：attachment 型走 `frameForTextAttachment(at:)`（fragment 坐标），文字型走 `enumerateTextSegments`（container 坐标）。
-- **排版与绘制分离**：排版完全交给 TextKit 2，绘制发生在自定义 `TextDisplayLayer`；`layoutQueue` 可选把排版派发到后台队列。
+- **排版与绘制分离**：排版完全交给 TextKit 2，绘制发生在自定义 `TextDisplayLayer`；两个可选开关把耗时挪走 —— `layoutQueue` 把**排版**派发到后台队列，`rendersAsynchronously` 把**绘制命令的执行**延后到 `draw(in:)` 返回之后。
 - **规则化扩展**：注册一条 `TextTokenRule` 就能让 label 支持一种新的内联内容，无需改 label 本身；支持在设置 `text` 之后注册新规则并 `reload()` 热生效。
 - **Auto Layout 友好**：`intrinsicContentSize` / `sizeThatFits(_:)` 可用，多行自适应高度时设置 `preferredMaxLayoutWidth`（语义同 `UILabel`）。
 - **零依赖**：纯 UIKit + TextKit 2，演示 App 不需要任何图片资源（emoji 由代码现场渲染）。
@@ -22,8 +22,17 @@ RichTextLabelDemo/
 │   ├── RichTextRenderer.swift   # 自定义 layout fragment vending + 整篇文档绘制 + TextDisplayLayer
 │   ├── InlineDecoration.swift   # 扩展点①：内联自绘协议 + ImageDecoration + DecorationAttachment
 │   └── TokenRule.swift          # 扩展点②：TextTokenRule 协议 + TokenRegistry + 内置 emoji/URL 规则
-├── ViewController.swift         # 演示 App（三组示例 + 字号步进器 + 点击状态栏）
-└── Assets.xcassets / Storyboard # 工程模板资源
+├── Features/                    # 演示 App：feature 列表 + 每个 feature 一个子页面
+│   ├── DemoFeature.swift        # 列表数据源（标题 / 副标题 / 子页面工厂）
+│   ├── DemoPageViewController.swift # 子页面公共骨架：卡片工厂 + 字号步进器 + 点击状态栏
+│   ├── DemoSettings.swift       # 跨子页面共享的字号 / 异步渲染开关
+│   ├── DemoTokenRules.swift     # 演示用规则与图集：DemoEmoji、@提及、#话题、徽章
+│   ├── EmojiDemoViewController.swift        # ① 自定义 emoji
+│   ├── TextTokenDemoViewController.swift    # ② 文字型 token
+│   ├── BadgeDemoViewController.swift        # ③ 自绘徽章
+│   └── AsyncRenderingDemoViewController.swift # ④ 异步渲染开关
+├── ViewController.swift         # 演示 App 入口：feature 列表
+└── Assets.xcassets / Storyboard # 工程模板资源（Storyboard 里 ViewController 已包在导航控制器内）
 ```
 
 ### 数据流
@@ -35,6 +44,7 @@ text（纯文本）
       └─ decoration(for:) = nil → 保留原文字，叠加 attributes(for:) + tokenID/tokenPayload
   → NSTextContentStorage → NSTextLayoutManager（vending RichTextLayoutFragment）
   → TextDisplayLayer.draw → fragment.draw(at:in:) 先画文字，再补画 decoration
+      （可选 rendersAsynchronously：CG 命令延后执行，display() 更快返回）
 ```
 
 ## 快速上手
@@ -104,13 +114,18 @@ label.registry.register(MentionTokenRule())
 
 ## 演示 App
 
-运行 Demo target，从上到下三组示例：
+运行 Demo target，首屏是 feature 列表，点进去是每个扩展点的独立子页面：
 
 1. **自定义 emoji**：`EmojiTokenRule` + 模拟 0.8s 网络延迟的异步 loader，先看到占位块再看到真图（不重排）；`:wtf:` 未注册，保留原文。没有图片资源也能跑 —— `DemoEmoji` 把系统 unicode emoji 现渲染成图。
 2. **文字型 token**：URL（点击直接打开）、`@提及`（紫色高亮）；按钮演示**运行期注册 `#话题` 规则 + `reload()`** —— 点击前 `#TextKit2` 只是普通文字。
 3. **自绘徽章**：`BadgeTokenRule` 识别 `[vip]` `[beta]` `[new]`，`BadgeDecoration` 纯 CoreGraphics 画胶囊 + 描边 + 文字，点击同样有回调。
+4. **异步渲染开关**：`rendersAsynchronously`。拨开关**画面不变** —— 收益在主线程耗时，不在外观；配合字号步进器和点击 token 验证两种模式行为一致。页内还有一张 emoji + 链接 + @提及 + 徽章的混合 label 当作用对象。
 
-底部：字号步进器（13–24pt，`font` didSet → 用原始纯文本重新编译，图标随字号缩放）+ 状态栏显示最近一次点击的 `identifier / payload / range`。
+子页面底部：字号步进器（13–24pt，`font` didSet → 用原始纯文本重新编译，图标随字号缩放）+ 状态栏显示最近一次点击的 `identifier / payload / range`。
+
+字号和异步渲染开关存在 `DemoSettings` 里跨页面共享：在任一子页面调过，回到列表再进其它页面（包括页面④拨过的开关）都会套用，返回已打开的页面时也会同步。
+
+新增 feature 只要在 `DemoFeature.all` 里追加一项（标题 / 副标题 / 子页面工厂），列表和导航自动跟上；子页面继承 `DemoPageViewController`，在 `buildContent()` 里用 `addCard(title:detail:)` + `makeDemoLabel()` 拼内容即可。
 
 ## 环境要求
 
@@ -124,6 +139,7 @@ label.registry.register(MentionTokenRule())
 - `reload()` 适用场景：设置 `text` 之后才注册新规则、异步替换了 emoji 图集。
 - 绘制走全量枚举 fragment（label 非滚动、内容全可见）；要在滚动容器里做长文档，需换成 `NSTextViewportLayoutController` 才能拿到惰性布局的收益。
 - 异步排版（`layoutQueue`）下 `intrinsicContentSize` 首次读取可能是估算值，排版完成后需自行 `invalidateIntrinsicContentSize()`。
+- 异步渲染（`rendersAsynchronously`）是许可性语义 —— `drawsAsynchronously` 头文件用的是 *may*，系统可以不采纳。开启后画面与关闭时视觉一致（黑灰正文逐位相同，彩色内容及其抗锯齿边缘有 LSB 级色差 —— 模拟器 framebuffer 对比约 0.5% 像素、平均通道差 Δ5），收益是主线程耗时，代价是上屏时机可能延后；逐帧变化的内容（动画）不适合开。排版与绘制入口仍在主线程，不引入数据竞争，但自定义 `InlineDecoration.draw(in:frame:state:)` 里不能回读 context（命令延后执行时回读只能拿到空数据）。
 
 # Screenshot
 

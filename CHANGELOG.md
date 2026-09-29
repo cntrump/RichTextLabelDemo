@@ -3,6 +3,28 @@
 本文件记录项目的所有重要变更。
 格式参照 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### Added
+
+- **`RichTextLabel.rendersAsynchronously`**：可选异步渲染开关，直通 `TextDisplayLayer` 对 CALayer `drawsAsynchronously` 的封装，默认关闭
+  - 开启后 `TextDisplayLayer.draw(in:)` 录制的 CG 命令**可能**被排队、延后到该方法返回后执行，`display()` 更快返回；许可性语义（头文件用 *may*），系统可以不采纳
+  - 画面与关闭时视觉一致（正文逐位相同，彩色内容抗锯齿边缘有 LSB 级色差），收益在主线程耗时；排版与绘制入口仍在主线程，不引入数据竞争
+  - 边界：自定义 `InlineDecoration.draw(in:frame:state:)` 不能回读 context；逐帧变化的内容（动画）不适合开
+- **演示 App**：`rendersAsynchronously` 开关（④ 异步渲染页），作用到全部演示 label；README「特性」「演示 App」「已知边界」同步更新
+
+### Changed
+
+- **`TextDisplayLayer`**：新增 `rendersAsynchronously` 存储属性（命名避开继承的 `drawsAsynchronously` —— Swift 无法用存储属性覆盖继承属性）；`didSet` 里 `setNeedsDisplay()`，保证运行期切换立即反映到下一次绘制
+- **演示 App 结构调整**：`ViewController` 从「单屏四组卡片」改成「feature 列表 + 每个 feature 一个独立子页面」
+  - `ViewController`：`insetGrouped` 列表，数据源是 `DemoFeature.all`（标题 / 副标题 / 子页面工厂），点击 push 子页面；新增 feature 只要往数组里追加一项
+  - `Features/DemoPageViewController`：子页面公共骨架，原先散在 `ViewController` 里的滚动容器、卡片工厂、`makeDemoLabel()`、字号步进器、点击状态栏都收到这里，子类只写 `buildContent()`
+  - `Features/DemoSettings`：字号与异步渲染开关跨子页面共享，任一页面调过对其它页面（含之后新建的）同样生效，`viewWillAppear` 里同步
+  - `Features/DemoTokenRules`：演示用规则与图集（`DemoEmoji` / `MentionTokenRule` / `HashtagTokenRule` / `BadgeTokenRule` / `BadgeDecoration`）从 `ViewController.swift` 移出，改为 internal 供各页面共用
+  - 四个子页面：`EmojiDemoViewController` / `TextTokenDemoViewController` / `BadgeDemoViewController` / `AsyncRenderingDemoViewController`；④ 页原本只靠其它卡片的 label 当作用对象，现在自带一张 emoji + 链接 + @提及 + 徽章的混合 label
+  - `Main.storyboard`：`ViewController` 包进 `UINavigationController` 作为 initial view controller，子页面用 push 导航
+  - RichTextKit 库代码未改动；README「目录结构」「演示 App」同步更新
+
 ## [1.0.0] - 2026-09-28
 
 首个版本：RichTextKit 核心库 + 演示 App + 项目文档。全部代码与文档由 AI（Claude Code）编写，没有人类参与（见 README 声明）。
